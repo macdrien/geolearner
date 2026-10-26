@@ -1,36 +1,123 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# GeoLearner
 
-## Getting Started
+GeoLearner est un espace personnel pour apprendre la géographie avec des quiz
+et suivre ses résultats. Le catalogue et les données géographiques sont rendus
+côté serveur ; une fois un quiz lancé, les questions, les réponses et la
+progression sont gérées localement dans le navigateur, sans requête réseau.
+L’historique reste enregistré sur l’appareil. Il n’y a pas de création de
+compte.
 
-First, run the development server:
+## Technologies
+
+- **Next.js App Router** : rendu serveur, routes et endpoints d’authentification.
+- **React** : interface adaptative et interactions.
+- **TypeScript** : typage statique.
+- **Git** : dépôt local initialisé sur la branche `main`.
+
+## Démarrer en développement
+
+Prérequis : Node.js et npm.
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Ouvre [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Configurer la connexion mono-utilisateur
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+La connexion n’accepte qu’une adresse e-mail et un mot de passe définis côté
+serveur. Aucun secret ne doit être ajouté au code ni exposé avec le préfixe
+`NEXT_PUBLIC_`.
 
-## Learn More
+Crée un fichier `.env.local` à la racine du projet :
 
-To learn more about Next.js, take a look at the following resources:
+```dotenv
+GEOLEARNER_EMAIL=toi@example.com
+GEOLEARNER_PASSWORD=remplace-par-un-mot-de-passe-unique
+GEOLEARNER_SESSION_SECRET=remplace-par-une-cle-aleatoire-de-32-caracteres-minimum
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Génère une clé de session avec `openssl rand -base64 32`. Utilise un mot de passe
+long et unique, et configure ces trois variables dans l’environnement de
+l’hébergeur avant de déployer. La connexion reste désactivée si les variables
+manquent ou si la clé de session fait moins de 32 caractères.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Les sessions sont signées côté serveur, stockées dans un cookie `HttpOnly` avec
+une durée maximale de 14 jours et invalidées si la configuration de session
+change. En production, le cookie est `Secure` : le site doit être servi en
+HTTPS. Il n’existe pas de récupération de mot de passe ni d’inscription.
 
-## Deploy on Vercel
+## Quiz et données
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Le catalogue regroupe les quiz par zone géographique. Chaque thème propose un
+quiz classique ou une liste à compléter ; les départements, les régions
+françaises et les quiz de pays proposent également une carte interactive. Le
+quiz « Saisir » utilise un champ unique et range chaque réponse correcte à sa
+place dans une liste triée. Les cartes peuvent être agrandies avec Ctrl + molette
+puis déplacées avec le clic droit maintenu. Les quiz de départements peuvent
+identifier chaque zone par son nom ou son numéro ; le quiz des préfectures
+permet de retrouver le département depuis sa préfecture. Les contours des
+départements, régions et pays sont embarqués : aucune donnée n’est chargée par
+API pendant une partie. Les counties anglais ne proposent pas encore de carte,
+car aucune limite cartographique correspondant au jeu de counties traditionnel
+n’est disponible dans les données du projet.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Sources des instantanés de données :
+
+- [API Découpage administratif de l’État](https://geo.api.gouv.fr/) pour les
+  départements, préfectures, régions et populations communales françaises.
+- [France GeoJSON](https://github.com/gregoiredavid/france-geojson) pour les
+  contours simplifiés des départements et régions, issus des données IGN sous
+  Licence Ouverte.
+- [GeoNames](https://www.geonames.org/) pour les localités anglaises (données
+  sous licence CC BY 4.0).
+- [Banque mondiale](https://data.worldbank.org/indicator/SP.POP.TOTL) pour la
+  population des pays (données 2023), et
+  [REST Countries](https://restcountries.com/) pour leurs superficies et noms.
+- Les counties anglais et leurs chefs-lieux traditionnels forment une
+  correspondance géographique de référence ; le terme « chef-lieu » n’a pas de
+  définition administrative uniforme au Royaume-Uni.
+- [Natural Earth](https://www.naturalearthdata.com/) pour les contours des pays
+  sur la carte du monde (données du domaine public).
+
+## Historique et confidentialité
+
+Les résultats des tests sont conservés dans le stockage local du navigateur.
+Ils restent disponibles sur cet appareil, mais ne sont pas synchronisés entre
+plusieurs appareils ni sauvegardés sur le serveur. Pendant une partie, aucune
+requête n’est envoyée au serveur. La question suivante s’affiche au plus tard
+100 ms après la résolution d’une réponse.
+
+## Progressive Web App
+
+GeoLearner fournit un manifeste Web, une icône et un service worker. Depuis un
+navigateur mobile compatible, ouvre le menu du navigateur puis choisis
+« Ajouter à l’écran d’accueil » ou « Installer l’application ». L’installation
+et le fonctionnement hors connexion nécessitent HTTPS en production (ou
+`localhost` en développement). Les pages authentifiées ne sont pas mises en
+cache hors connexion.
+
+## Vérifier et construire
+
+```bash
+npm run lint
+npm test
+npm run test:unit
+npm run test:integration
+npm run build
+npm run start
+```
+
+Les tests unitaires sont dans `tests/unit` et couvrent le moteur des quiz,
+l’historique, l’authentification et le manifeste. Les tests d’intégration sont
+dans `tests/integration` et vérifient les pages de connexion et du tableau de
+bord, le déroulement local des quiz, ainsi que les routes d’authentification.
+
+Configure un dépôt distant uniquement lorsque tu choisiras ton hébergeur :
+
+```bash
+git remote add origin <url-du-depot>
+git push -u origin main
+```
