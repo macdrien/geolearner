@@ -2,7 +2,8 @@ import type { QuizCategoryId, QuizFormatId } from "@/lib/quiz-engine";
 
 export const quizModes = [
   { id: "relaxed", title: "À mon rythme", detail: "Sans chrono, tranquillement" },
-  { id: "timed", title: "Contre-la-montre", detail: "Pour me challenger" },
+  { id: "timed", title: "Chronométré", detail: "Mesure le temps total du quiz" },
+  { id: "race", title: "Contre-la-montre", detail: "15 secondes par réponse" },
   { id: "revision", title: "Révision", detail: "Revoir mes erreurs" },
 ] as const;
 

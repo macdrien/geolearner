@@ -5,6 +5,7 @@ import type {
   QuizFormatId,
   QuizLocation,
 } from "./quiz-catalog";
+import { quizCategories } from "./quiz-catalog";
 
 export { quizCategories, quizCategoryGroups } from "./quiz-catalog";
 export type {
@@ -31,10 +32,14 @@ export type QuizRequest = {
 export type QuizQuestion = {
   prompt: string;
   answer: string;
+  acceptedAnswers?: string[];
   choices: string[];
 };
 
-type QuestionPrompt = Pick<QuizQuestion, "prompt" | "answer">;
+type QuestionPrompt = Pick<
+  QuizQuestion,
+  "prompt" | "answer" | "acceptedAnswers"
+>;
 type RankedQuizContext = {
   locations: QuizLocation[];
   subject: string;
@@ -104,18 +109,10 @@ const fixedQuizCounts: Partial<
   departments: (data) => data.departments.length,
   prefectures: (data) => data.departments.length,
   regions: (data) => data.frenchRegions.length,
-  "england-counties": (data) =>
+  "england-counties": (data) => data.englandCounties.length,
+  "england-seats": (data) =>
     new Set(data.englandCounties.map(({ seat }) => seat)).size,
-  "england-seats": (data) => data.englandCounties.length,
 };
-
-const mapQuizCategories: QuizCategoryId[] = [
-  "departments",
-  "prefectures",
-  "regions",
-  "world-population",
-  "world-area",
-];
 
 function shuffle<T>(items: T[], random: () => number) {
   const shuffled = [...items];
@@ -143,7 +140,7 @@ function createQuestions(
     throw new Error("Un quiz doit proposer au moins quatre réponses possibles.");
   }
 
-  return shuffle(items, random).map(({ prompt, answer }) => {
+  return shuffle(items, random).map(({ prompt, answer, acceptedAnswers }) => {
     const distractors = shuffle(
       [...new Set(answerPool.filter((option) => option !== answer))],
       random,
@@ -156,6 +153,7 @@ function createQuestions(
     return {
       prompt,
       answer,
+      ...(acceptedAnswers ? { acceptedAnswers } : {}),
       choices: shuffle([answer, ...distractors], random),
     };
   });
@@ -181,7 +179,7 @@ function rankedQuestions(
   return locations.slice(0, size).map((location, index) => ({
     prompt:
       format === "map"
-        ? `Trouve ${location.name} sur la carte du monde.`
+        ? `Trouve ${location.name} sur la carte.`
         : `Quel nom occupe la ${index === 0 ? "1re" : `${index + 1}e`} place du classement ${subject} ?`,
     answer: location.name,
   }));
@@ -201,6 +199,7 @@ function createCountySeatQuestions(counties: EnglandCounty[]) {
         ? `${seat} est le chef-lieu traditionnel de quels counties ?`
         : `${seat} est le chef-lieu traditionnel de quel county ?`,
     answer: names.join(" et "),
+    acceptedAnswers: names,
   }));
 }
 
@@ -213,9 +212,10 @@ export function isRankedQuizCategory(
 export function getAvailableQuizFormats(
   category: QuizCategoryId,
 ): QuizFormatId[] {
-  return mapQuizCategories.includes(category)
-    ? ["classic", "list", "map"]
-    : ["classic", "list"];
+  if (!quizCategories.some(({ id }) => id === category)) {
+    throw new Error(`Catégorie de quiz inconnue : ${category}.`);
+  }
+  return ["classic", "list", "map"];
 }
 
 export function normalizeQuizAnswer(answer: string) {
@@ -225,6 +225,13 @@ export function normalizeQuizAnswer(answer: string) {
     .normalize("NFD")
     .replace(/\p{Diacritic}/gu, "")
     .replace(/\s+/g, " ");
+}
+
+export function isQuizAnswerCorrect(question: QuizQuestion, answer: string) {
+  const normalizedAnswer = normalizeQuizAnswer(answer);
+  return [question.answer, ...(question.acceptedAnswers ?? [])].some(
+    (acceptedAnswer) => normalizeQuizAnswer(acceptedAnswer) === normalizedAnswer,
+  );
 }
 
 export function getQuizQuestionCount(
@@ -341,15 +348,32 @@ export function buildQuiz(
       answerPool = data.frenchRegions.map(({ name }) => name);
       break;
     case "england-counties":
-      items = createCountySeatQuestions(data.englandCounties);
-      answerPool = items.map(({ answer }) => answer);
-      break;
-    case "england-seats":
       items = data.englandCounties.map(({ name, seat }) => ({
-        prompt: `Quel est le chef-lieu traditionnel du county de ${name} ?`,
+        prompt:
+          format === "map"
+            ? `Repère ${seat}, le chef-lieu traditionnel du county ${name}, sur la carte.`
+            : `Quel est le chef-lieu traditionnel du county de ${name} ?`,
         answer: seat,
       }));
       answerPool = data.englandCounties.map(({ seat }) => seat);
+      break;
+    case "england-seats":
+      items =
+        format === "map"
+          ? createCountySeatQuestions(data.englandCounties).map(
+              ({ prompt, acceptedAnswers }) => ({
+                prompt,
+                answer: acceptedAnswers[0],
+                acceptedAnswers,
+              }),
+            )
+          : createCountySeatQuestions(data.englandCounties).map(
+              ({ prompt, answer }) => ({ prompt, answer }),
+            );
+      answerPool =
+        format === "map"
+          ? data.englandCounties.map(({ name }) => name)
+          : items.map(({ answer }) => answer);
       break;
     default:
       throw new Error(`Impossible de générer le quiz « ${request.category} ».`);

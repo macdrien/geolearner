@@ -131,7 +131,9 @@ export default function QuizConfiguration({
     }),
   );
   const formatOptions: SelectableOption<QuizFormatId>[] =
-    getAvailableQuizFormats(category).map((formatId) => {
+    getAvailableQuizFormats(category)
+      .filter((formatId) => mode !== "race" || formatId !== "list")
+      .map((formatId) => {
       const option = quizFormats.find(({ id }) => id === formatId);
       if (!option) throw new Error(`Format de quiz inconnu : ${formatId}.`);
       return {
@@ -139,7 +141,12 @@ export default function QuizConfiguration({
         title: option.title,
         detail: option.detail,
       };
-    });
+      });
+  const hasQuizSettings =
+    isRankedQuizCategory(category) ||
+    category === "region-cities" ||
+    category === "occitanie-cities" ||
+    (category === "departments" && format === "map");
 
   function handleStart() {
     onStart({
@@ -188,24 +195,11 @@ export default function QuizConfiguration({
           variant="mode"
         />
       </div>
-      <div className={styles.modeSection}>
-        <SectionHeading
-          step="03"
-          eyebrow="Choisis ton rythme"
-          title="Comment veux-tu jouer ?"
-        />
-        <SelectableOptionGroup
-          onSelect={onModeChange}
-          options={modeOptions}
-          selectedValue={mode}
-          variant="mode"
-        />
-      </div>
-      {(isRankedQuizCategory(category) ||
-        category === "region-cities" ||
-        category === "occitanie-cities" ||
-        (category === "departments" && format === "map")) && (
-        <section className={styles.quizSettingsPanel} aria-label="Options du quiz">
+      {hasQuizSettings && (
+        <section
+          className={styles.quizSettingsPanel}
+          aria-label="Options du quiz"
+        >
           <h3>Options du quiz</h3>
           {isRankedQuizCategory(category) && (
             <div className={styles.quizSettings}>
@@ -282,6 +276,19 @@ export default function QuizConfiguration({
           )}
         </section>
       )}
+      <div className={styles.modeSection}>
+        <SectionHeading
+          step="03"
+          eyebrow="Choisis ton rythme"
+          title="Comment veux-tu jouer ?"
+        />
+        <SelectableOptionGroup
+          onSelect={onModeChange}
+          options={modeOptions}
+          selectedValue={mode}
+          variant="mode"
+        />
+      </div>
       <div className={styles.startQuizArea}>
         <p>
           {questionCount} questions ·{" "}

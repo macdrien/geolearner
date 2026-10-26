@@ -81,7 +81,12 @@ export default function QuizDashboard({
   }
 
   function handleStartQuiz(request: QuizRequest) {
-    quizSession.startQuiz(request);
+    quizSession.startQuiz(request, mode);
+  }
+
+  function handleModeChange(nextMode: QuizModeId) {
+    setMode(nextMode);
+    if (nextMode === "race" && format === "list") setFormat("classic");
   }
 
   function handleCategoryChange(nextCategory: QuizCategoryId) {
@@ -119,6 +124,19 @@ export default function QuizDashboard({
     );
   }
 
+  function handleTimeExpired() {
+    const selectedCategory = quizCategories.find(
+      (option) => option.id === category,
+    );
+    const selectedMode = quizModes.find((option) => option.id === mode);
+    const selectedFormat = quizFormats.find((option) => option.id === format);
+
+    quizSession.timeExpired(
+      selectedCategory?.title ?? "Quiz de géographie",
+      `${selectedFormat?.title ?? "Quiz classique"} · ${selectedMode?.title ?? "Chronométré"}`,
+    );
+  }
+
   if (quizSession.state.status !== "idle") {
     const title =
       quizCategories.find((option) => option.id === category)?.title ??
@@ -130,6 +148,7 @@ export default function QuizDashboard({
         category={category}
         state={quizSession.state}
         onAnswer={quizSession.answerQuestion}
+        onTimeExpired={handleTimeExpired}
         onNext={handleNextQuestion}
         onSubmitList={handleSubmitListAnswers}
         onLeave={quizSession.leaveQuiz}
@@ -214,7 +233,7 @@ export default function QuizDashboard({
           onCategoryChange={handleCategoryChange}
           onFormatChange={setFormat}
           onMapIdentificationChange={setMapIdentification}
-          onModeChange={setMode}
+          onModeChange={handleModeChange}
           onQuizSizeChange={setQuizSize}
           onRegionChange={setRegionCode}
           onDepartmentChange={setDepartmentCode}

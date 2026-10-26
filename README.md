@@ -52,27 +52,44 @@ HTTPS. Il n’existe pas de récupération de mot de passe ni d’inscription.
 ## Quiz et données
 
 Le catalogue regroupe les quiz par zone géographique. Chaque thème propose un
-quiz classique ou une liste à compléter ; les départements, les régions
-françaises et les quiz de pays proposent également une carte interactive. Le
-quiz « Saisir » utilise un champ unique et range chaque réponse correcte à sa
-place dans une liste triée. Les cartes peuvent être agrandies avec Ctrl + molette
-puis déplacées avec le clic droit maintenu. Les quiz de départements peuvent
-identifier chaque zone par son nom ou son numéro ; le quiz des préfectures
-permet de retrouver le département depuis sa préfecture. Les contours des
-départements, régions et pays sont embarqués : aucune donnée n’est chargée par
-API pendant une partie. Les counties anglais ne proposent pas encore de carte,
-car aucune limite cartographique correspondant au jeu de counties traditionnel
-n’est disponible dans les données du projet.
+quiz classique, une liste à compléter (« Saisir ») et, lorsque les données
+géographiques le permettent, une carte interactive. La saisie se fait dans un
+champ unique et range chaque réponse correcte à sa place dans une liste triée.
+Les cartes de départements, préfectures, régions, communes françaises, counties
+et villes anglaises, ainsi que les cartes du monde, sont embarquées dans
+l’application : aucune donnée n’est chargée par API pendant une partie. La
+carte des grandes communes cadre la France métropolitaine sur ses contours et
+place les réponses ultramarines dans des vignettes dédiées. Les cartes peuvent
+être agrandies par pincement du trackpad ou avec Ctrl + molette, puis déplacées
+avec le clic droit maintenu. Le zoom suit la position du pointeur, et le zoom
+global de la page est bloqué pendant le geste effectué sur la carte.
+Les marqueurs des villes gardent leur taille à l’écran pendant le zoom afin de
+rester faciles à sélectionner.
+Chaque sélection sur une carte reçoit un retour visuel et textuel distinct
+selon qu’elle est correcte ou incorrecte ; après deux erreurs, la bonne zone
+est également mise en évidence.
+Les départements peuvent être identifiés par leur nom ou leur numéro ; le quiz
+des préfectures fait retrouver le département correspondant.
+
+Trois rythmes sont proposés : « À mon rythme », « Chronométré » (durée totale
+visible, sans limite) et « Contre-la-montre » (15 secondes par question, puis
+défaite si le délai expire). Le format « Saisir » n’est pas proposé en
+contre-la-montre.
 
 Sources des instantanés de données :
 
 - [API Découpage administratif de l’État](https://geo.api.gouv.fr/) pour les
-  départements, préfectures, régions et populations communales françaises.
+  départements, préfectures, régions, populations et coordonnées communales
+  françaises.
 - [France GeoJSON](https://github.com/gregoiredavid/france-geojson) pour les
   contours simplifiés des départements et régions, issus des données IGN sous
   Licence Ouverte.
 - [GeoNames](https://www.geonames.org/) pour les localités anglaises (données
   sous licence CC BY 4.0).
+- [Ordnance Survey Boundary-Line](https://www.ordnancesurvey.co.uk/products/boundary-line)
+  et les limites des autorités locales publiées par l’[ONS](https://geoportal.statistics.gov.uk/)
+  pour les contours anglais embarqués, adaptés aux counties traditionnels du
+  quiz.
 - [Banque mondiale](https://data.worldbank.org/indicator/SP.POP.TOTL) pour la
   population des pays (données 2023), et
   [REST Countries](https://restcountries.com/) pour leurs superficies et noms.
@@ -88,7 +105,8 @@ Les résultats des tests sont conservés dans le stockage local du navigateur.
 Ils restent disponibles sur cet appareil, mais ne sont pas synchronisés entre
 plusieurs appareils ni sauvegardés sur le serveur. Pendant une partie, aucune
 requête n’est envoyée au serveur. La question suivante s’affiche au plus tard
-100 ms après la résolution d’une réponse.
+100 ms après la résolution d’une réponse ; un test mesure aussi cette latence
+et vérifie qu’elle reste sous 200 ms.
 
 ## Progressive Web App
 

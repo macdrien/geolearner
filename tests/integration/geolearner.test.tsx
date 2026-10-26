@@ -1,6 +1,7 @@
 import {
   act,
   cleanup,
+  createEvent,
   fireEvent,
   render,
   screen,
@@ -113,6 +114,99 @@ describe("GeoLearner page interactions", () => {
       .toBeTruthy();
   });
 
+  it("places quiz settings beneath the answer format and makes them available", () => {
+    render(<GeoLearner email="owner@example.com" geography={geography} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: /Les plus grandes communes de France/ }),
+    );
+
+    const formatHeading = screen.getByRole("heading", {
+      name: "Comment veux-tu répondre ?",
+    });
+    const settings = screen.getByRole("region", { name: "Options du quiz" });
+    expect(within(settings).getByLabelText("Nombre de questions")).toBeTruthy();
+    expect(
+      formatHeading.compareDocumentPosition(settings) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("loses a race quiz after 15 seconds and distinguishes the stopwatch mode", async () => {
+    vi.useFakeTimers();
+    render(<GeoLearner email="owner@example.com" geography={geography} />);
+    fireEvent.click(screen.getByRole("button", { name: /Saisir/ }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Contre-la-montre/ }),
+    );
+
+    expect(screen.queryByRole("button", { name: /Saisir/ })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /Quiz classique/ }).getAttribute(
+        "aria-pressed",
+      ),
+    ).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "Démarrer le quiz" }));
+    expect(screen.getByRole("timer", { name: "Temps restant" }).textContent)
+      .toContain("15 s par question");
+
+    await act(async () => {
+      vi.advanceTimersByTime(14_999);
+    });
+    expect(screen.queryByText("Temps écoulé : quiz perdu")).toBeNull();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(screen.getByText("Temps écoulé : quiz perdu")).toBeTruthy();
+    expect(
+      JSON.parse(
+        localStorage.getItem("geolearner:completed-attempts:v1") ?? "[]",
+      )[0].mode,
+    ).toContain("Contre-la-montre");
+    expect(fetch).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Choisir un autre quiz" }));
+    fireEvent.click(screen.getByRole("button", { name: /Chronométré/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Démarrer le quiz" }));
+    expect(screen.getByRole("timer", { name: "Temps écoulé" }).textContent)
+      .toContain("Chronomètre : 0:00");
+    await act(async () => {
+      vi.advanceTimersByTime(2_000);
+    });
+    expect(screen.getByRole("timer", { name: "Temps écoulé" }).textContent)
+      .toContain("Chronomètre : 0:02");
+  });
+
+  it("restarts the 15-second countdown for each new question", async () => {
+    vi.useFakeTimers();
+    render(<GeoLearner email="owner@example.com" geography={geography} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: /Contre-la-montre/ }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Démarrer le quiz" }));
+
+    const prompt = screen.getByRole("heading", { level: 2 }).textContent ?? "";
+    const correctDepartment = geography.departments.find(({ prefecture }) =>
+      prompt.includes(prefecture),
+    )?.name;
+    if (!correctDepartment) throw new Error("La réponse correcte est introuvable.");
+
+    await act(async () => {
+      vi.advanceTimersByTime(14_000);
+    });
+    expect(screen.getByRole("timer", { name: "Temps restant" }).textContent)
+      .toContain("1 s par question");
+
+    fireEvent.click(screen.getByRole("radio", { name: correctDepartment }));
+    await act(async () => {
+      vi.advanceTimersByTime(100);
+    });
+
+    expect(screen.getByText("Question 2 sur 101")).toBeTruthy();
+    expect(screen.getByRole("timer", { name: "Temps restant" }).textContent)
+      .toContain("15 s par question");
+  });
+
   it("groups quiz subjects, allows a retry, and advances automatically on the map", async () => {
     vi.useFakeTimers();
     render(<GeoLearner email="owner@example.com" geography={geography} />);
@@ -146,16 +240,73 @@ describe("GeoLearner page interactions", () => {
     fireEvent.click(
       screen.getByRole("button", { name: incorrectDepartment }),
     );
-    expect(screen.getByRole("status").textContent).toContain("Essaie encore");
+    const incorrectFeedback = screen.getByRole("status");
+    expect(incorrectFeedback.textContent).toContain("Incorrect.");
+    expect(incorrectFeedback.textContent).toContain("Essaie encore.");
+    expect(incorrectFeedback.getAttribute("class")).toContain(
+      "quizFeedbackIncorrect",
+    );
+    expect(
+      screen
+        .getByRole("button", { name: incorrectDepartment })
+        .getAttribute("class"),
+    ).toContain("quizMapRegionIncorrect");
 
     fireEvent.click(
       screen.getByRole("button", { name: correctDepartment }),
     );
-    expect(screen.getByRole("status").textContent).toContain("Bonne réponse");
+    const correctFeedback = screen.getByRole("status");
+    expect(correctFeedback.textContent).toContain("Bonne réponse !");
+    expect(correctFeedback.textContent).toContain(correctDepartment);
+    expect(correctFeedback.getAttribute("class")).toContain(
+      "quizFeedbackCorrect",
+    );
+    expect(
+      screen
+        .getByRole("button", { name: correctDepartment })
+        .getAttribute("class"),
+    ).toContain("quizMapRegionCorrect");
     await act(async () => {
       vi.advanceTimersByTime(100);
     });
     expect(screen.getByText("Question 2 sur 101")).toBeTruthy();
+  });
+
+  it("reveals the correct map zone after two incorrect selections", () => {
+    render(<GeoLearner email="owner@example.com" geography={geography} />);
+    fireEvent.click(screen.getByRole("button", { name: /Sur une carte/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Démarrer le quiz" }));
+
+    const map = screen.getByRole("group", {
+      name: "Carte des départements métropolitains",
+    });
+    const prompt = screen.getByRole("heading", { level: 2 }).textContent ?? "";
+    const correctDepartment = geography.departments.find(
+      ({ name }) => prompt === `Place le département ${name} sur la carte.`,
+    )?.name;
+    if (!correctDepartment) throw new Error("Le département attendu est introuvable.");
+
+    const incorrectDepartments = geography.departments
+      .map(({ name }) => name)
+      .filter((name) => name !== correctDepartment)
+      .slice(0, 2);
+    for (const name of incorrectDepartments) {
+      fireEvent.click(within(map).getByRole("button", { name }));
+    }
+
+    expect(screen.getByRole("status").textContent).toContain(
+      `La bonne réponse était : ${correctDepartment}.`,
+    );
+    expect(
+      within(map)
+        .getByRole("button", { name: correctDepartment })
+        .getAttribute("class"),
+    ).toContain("quizMapRegionCorrect");
+    expect(
+      within(map)
+        .getByRole("button", { name: incorrectDepartments[1] })
+        .getAttribute("class"),
+    ).toContain("quizMapRegionIncorrect");
   });
 
   it("reveals the answer and advances after a second incorrect answer", async () => {
@@ -233,6 +384,118 @@ describe("GeoLearner page interactions", () => {
     expect(within(worldMap).getAllByRole("button")).toHaveLength(177);
   });
 
+  it("renders interactive points for French, regional, Occitanie, and English city maps", () => {
+    render(<GeoLearner email="owner@example.com" geography={geography} />);
+    const pointMapQuizzes = [
+      {
+        category: /Les plus grandes communes de France/,
+        label: "Carte des communes françaises",
+      },
+      {
+        category: /Les plus grandes communes par région/,
+        label: "Carte des communes françaises",
+      },
+      {
+        category: /Les communes d’Occitanie par département/,
+        label: "Carte des communes françaises",
+      },
+      {
+        category: /Les plus grandes villes d’Angleterre/,
+        label: "Carte des counties anglais",
+      },
+    ] as const;
+
+    for (const { category, label } of pointMapQuizzes) {
+      fireEvent.click(screen.getByRole("button", { name: category }));
+      fireEvent.click(screen.getByRole("button", { name: /Sur une carte/ }));
+      fireEvent.click(screen.getByRole("button", { name: "Démarrer le quiz" }));
+
+      const map = screen.getByRole("group", { name: label });
+      expect(within(map).getAllByRole("button").length).toBeGreaterThan(0);
+      fireEvent.click(screen.getByRole("button", { name: "Retour aux quiz" }));
+    }
+  });
+
+  it("fits fifty French city markers over the metropolitan France map", () => {
+    render(<GeoLearner email="owner@example.com" geography={geography} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: /Les plus grandes communes de France/ }),
+    );
+    fireEvent.change(screen.getByLabelText("Nombre de questions"), {
+      target: { value: "50" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Sur une carte/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Démarrer le quiz" }));
+
+    const map = screen.getByRole("group", {
+      name: "Carte des communes françaises",
+    });
+    const backgrounds = map.querySelectorAll('path[aria-hidden="true"]');
+    expect(backgrounds.length).toBeGreaterThan(90);
+
+    const markers = within(map).getAllByRole("button");
+    expect(markers.length).toBeGreaterThan(40);
+    const background = backgrounds[0];
+    if (!background) throw new Error("Le fond départemental est absent.");
+    expect(background.getAttribute("role")).toBeNull();
+    expect(background.getAttribute("class")).toContain("quizMapBackground");
+    fireEvent.click(background);
+    expect(screen.queryByRole("status")).toBeNull();
+
+    const question =
+      screen.getByRole("heading", { level: 2 }).textContent ?? "";
+    const correctCity = geography.frenchCities
+      .slice(0, 50)
+      .find(({ name }) => question === `Trouve ${name} sur la carte.`);
+    if (!correctCity) throw new Error("La ville correcte est introuvable.");
+    const incorrectCity = markers.find(
+      (marker) => marker.getAttribute("aria-label") !== correctCity.name,
+    );
+    if (!incorrectCity) throw new Error("Aucun point de ville incorrect disponible.");
+    fireEvent.click(incorrectCity);
+    expect(screen.getByRole("status").textContent).toContain(
+      "n’est pas la bonne réponse. Essaie encore.",
+    );
+    expect(incorrectCity.getAttribute("class")).toContain(
+      "quizMapRegionIncorrect",
+    );
+
+    fireEvent.click(
+      within(map).getAllByRole("button", { name: correctCity.name })[0],
+    );
+    expect(screen.getByRole("status").textContent).toContain(
+      `${correctCity.name} est la bonne réponse.`,
+    );
+    expect(
+      within(map)
+        .getAllByRole("button", { name: correctCity.name })[0]
+        .getAttribute("class"),
+    ).toContain("quizMapRegionCorrect");
+
+    const markerCoordinates = markers.map((marker) => {
+      const path = marker.getAttribute("d");
+      const match = path?.match(/^M(-?[\d.]+),(-?[\d.]+)/);
+      if (!match) throw new Error("Le point de ville ne contient pas de coordonnées.");
+      return { x: Number(match[1]) + 5.5, y: Number(match[2]) };
+    });
+    const horizontalSpan =
+      Math.max(...markerCoordinates.map(({ x }) => x)) -
+      Math.min(...markerCoordinates.map(({ x }) => x));
+    const verticalSpan =
+      Math.max(...markerCoordinates.map(({ y }) => y)) -
+      Math.min(...markerCoordinates.map(({ y }) => y));
+
+    expect(horizontalSpan).toBeGreaterThan(420);
+    expect(verticalSpan).toBeGreaterThan(400);
+    expect(screen.getByRole("group", { name: "Carte de La Réunion" })).toBeTruthy();
+    expect(
+      within(screen.getByRole("group", { name: "Carte de La Réunion" })).getByRole(
+        "button",
+        { name: "Saint-Paul" },
+      ),
+    ).toBeTruthy();
+  });
+
   it("zooms and pans maps with Ctrl-wheel and right-button dragging", () => {
     render(<GeoLearner email="owner@example.com" geography={geography} />);
     fireEvent.click(screen.getByRole("button", { name: /Sur une carte/ }));
@@ -246,7 +509,7 @@ describe("GeoLearner page interactions", () => {
       name: "Carte des départements métropolitains",
     });
     expect(zoomedMap.querySelector("g")?.getAttribute("transform")).toContain(
-      "scale(1.221",
+      "scale(1.197",
     );
 
     fireEvent.mouseDown(zoomedMap, {
@@ -258,6 +521,59 @@ describe("GeoLearner page interactions", () => {
     expect(zoomedMap.querySelector("g")?.getAttribute("transform")).not.toContain(
       "translate(360 280)",
     );
+  });
+
+  it("zooms smoothly with small trackpad pinch deltas without hijacking scroll", () => {
+    render(<GeoLearner email="owner@example.com" geography={geography} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: /Les plus grandes communes de France/ }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Sur une carte/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Démarrer le quiz" }));
+
+    const map = screen.getByRole("group", {
+      name: "Carte des communes françaises",
+    });
+    const mapContent = () => map.querySelector("g")?.getAttribute("transform");
+    const marker = within(map).getAllByRole("button")[0];
+    if (!marker) throw new Error("Aucun point de ville n’est visible.");
+    const markerPath = marker.getAttribute("d");
+
+    const regularScrollEvent = createEvent.wheel(map, {
+      deltaY: -10,
+      cancelable: true,
+    });
+    let regularScrollAllowed = false;
+    act(() => {
+      regularScrollAllowed = map.dispatchEvent(regularScrollEvent);
+    });
+    expect(regularScrollAllowed).toBe(true);
+    expect(mapContent()).toContain("scale(1)");
+
+    const pinchInEvent = createEvent.wheel(map, {
+      ctrlKey: true,
+      deltaY: -2,
+      clientX: 220,
+      clientY: 180,
+      cancelable: true,
+    });
+    let pinchScrollAllowed = true;
+    act(() => {
+      pinchScrollAllowed = map.dispatchEvent(pinchInEvent);
+    });
+    expect(pinchScrollAllowed).toBe(false);
+    expect(pinchInEvent.defaultPrevented).toBe(true);
+    expect(mapContent()).toContain("scale(1.040");
+    expect(marker.getAttribute("d")).toBe(markerPath);
+    expect(marker.getAttribute("transform")).toContain("scale(0.960789");
+    fireEvent.wheel(map, {
+      ctrlKey: true,
+      deltaY: 1,
+      clientX: 220,
+      clientY: 180,
+    });
+    expect(mapContent()).toContain("scale(1.020");
+    expect(marker.getAttribute("transform")).toContain("scale(0.980198");
   });
 
   it("lets users identify departments by prefecture on a map", () => {
@@ -276,6 +592,55 @@ describe("GeoLearner page interactions", () => {
     expect(screen.getByRole("heading", { level: 2 }).textContent).toContain(
       "préfecture est",
     );
+  });
+
+  it("maps English counties to their seats and county seats back to counties", () => {
+    render(<GeoLearner email="owner@example.com" geography={geography} />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /Les counties anglais/ }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Sur une carte/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Démarrer le quiz" }));
+
+    const countyPrompt =
+      screen.getByRole("heading", { level: 2 }).textContent ?? "";
+    const county = geography.englandCounties.find(
+      ({ name, seat }) =>
+        countyPrompt ===
+        `Repère ${seat}, le chef-lieu traditionnel du county ${name}, sur la carte.`,
+    );
+    if (!county) throw new Error("La question county/chef-lieu est introuvable.");
+    const countyMap = screen.getByRole("group", {
+      name: "Carte des counties anglais",
+    });
+    expect(within(countyMap).getAllByRole("button", { name: county.seat }).length)
+      .toBeGreaterThan(0);
+    fireEvent.click(within(countyMap).getAllByRole("button", { name: county.seat })[0]);
+    expect(screen.getByRole("status").textContent).toContain("Bonne réponse");
+
+    fireEvent.click(screen.getByRole("button", { name: "Retour aux quiz" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /Les chefs-lieux des counties anglais/,
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Sur une carte/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Démarrer le quiz" }));
+
+    const seatPrompt =
+      screen.getByRole("heading", { level: 2 }).textContent ?? "";
+    const countySeat = geography.englandCounties.find(({ seat }) =>
+      seatPrompt.startsWith(`${seat} est le chef-lieu traditionnel`),
+    );
+    if (!countySeat) throw new Error("La question chef-lieu/county est introuvable.");
+    const seatMap = screen.getByRole("group", {
+      name: "Carte des counties anglais",
+    });
+    fireEvent.click(
+      within(seatMap).getByRole("button", { name: countySeat.name }),
+    );
+    expect(screen.getByRole("status").textContent).toContain("Bonne réponse");
   });
 
   it("offers department numbers as map question identifiers", () => {
@@ -365,13 +730,13 @@ describe("GeoLearner page interactions", () => {
     fireEvent.click(screen.getByRole("button", { name: "Terminer et corriger" }));
 
     expect(screen.getByRole("heading", { name: "Quiz terminé !" })).toBeTruthy();
-    expect(screen.getAllByText(/Réponse attendue :/).length).toBe(47);
-    expect(screen.getByText("Ton score : 0 / 47")).toBeTruthy();
+    expect(screen.getAllByText(/Réponse attendue :/).length).toBe(48);
+    expect(screen.getByText("Ton score : 0 / 48")).toBeTruthy();
     expect(
       JSON.parse(
         localStorage.getItem("geolearner:completed-attempts:v1") ?? "[]",
       )[0].score,
-    ).toBe("0/47");
+    ).toBe("0/48");
   });
 
   it("completes a quiz using local state and saves its result without network calls", async () => {

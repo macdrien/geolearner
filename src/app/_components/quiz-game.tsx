@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  isQuizAnswerCorrect,
   normalizeQuizAnswer,
   type QuizCategoryId,
   type QuizFormatId,
@@ -17,6 +18,7 @@ type QuizGameProps = {
   category: QuizCategoryId;
   state: Exclude<QuizSessionState, { status: "idle" }>;
   onAnswer: (answer: string) => void;
+  onTimeExpired: () => void;
   onNext: () => void;
   onSubmitList: (answers: string[]) => void;
   onLeave: () => void;
@@ -25,20 +27,26 @@ type QuizGameProps = {
 function QuizResult({
   score,
   total,
+  lost,
   error,
   onLeave,
 }: {
   score: number;
   total: number;
+  lost: boolean;
   error: string | null;
   onLeave: () => void;
 }) {
   return (
     <div className={styles.quizResult} role="status">
       <strong>
-        Ton score : {score} / {total}
+        {lost ? "Temps écoulé : quiz perdu" : `Ton score : ${score} / ${total}`}
       </strong>
-      <p>Le résultat est conservé uniquement sur cet appareil.</p>
+      <p>
+        {lost
+          ? `Ton score au moment de la fin du temps était de ${score} / ${total}.`
+          : "Le résultat est conservé uniquement sur cet appareil."}
+      </p>
       {error && (
         <p className={styles.quizError} role="alert">
           {error}
@@ -194,6 +202,8 @@ function QuizQuestionView({
   selectedAnswer,
   attempts,
   category,
+  areaCode,
+  quizAnswers,
   format,
   onAnswer,
 }: {
@@ -203,14 +213,18 @@ function QuizQuestionView({
   selectedAnswer: string | null;
   attempts: number;
   category: QuizCategoryId;
+  areaCode?: string;
+  quizAnswers: string[];
   format: QuizFormatId;
   onAnswer: (answer: string) => void;
 }) {
   const isResolved =
     selectedAnswer !== null &&
     (attempts >= 2 ||
-      normalizeQuizAnswer(selectedAnswer) ===
-        normalizeQuizAnswer(question.answer));
+      isQuizAnswerCorrect(question, selectedAnswer));
+  const isCorrectAnswer =
+    selectedAnswer !== null &&
+    isQuizAnswerCorrect(question, selectedAnswer);
 
   return (
     <>
@@ -222,7 +236,13 @@ function QuizQuestionView({
         {format === "map" ? (
           <QuizMap
             category={category}
+            areaCode={areaCode}
+            quizAnswers={quizAnswers}
             correctAnswer={question.answer}
+            acceptedAnswers={question.acceptedAnswers}
+            revealCorrectAnswer={
+              attempts >= 2 && selectedAnswer !== null && !isCorrectAnswer
+            }
             disabled={isResolved}
             onAnswer={onAnswer}
             selectedAnswer={selectedAnswer}
@@ -236,7 +256,7 @@ function QuizQuestionView({
             {question.choices.map((choice) => {
               const isSelected = selectedAnswer === choice;
               const answerClass = isSelected
-                ? choice === question.answer
+                ? isQuizAnswerCorrect(question, choice)
                   ? styles.correctChoice
                   : styles.incorrectChoice
                 : "";
@@ -258,12 +278,16 @@ function QuizQuestionView({
           </div>
         )}
         {selectedAnswer !== null && (
-          <p className={styles.quizFeedback} role="status">
-            {selectedAnswer === question.answer
-              ? "Bonne réponse !"
+          <p
+            className={`${styles.quizFeedback} ${isCorrectAnswer ? styles.quizFeedbackCorrect : styles.quizFeedbackIncorrect}`}
+            role="status"
+          >
+            <strong>{isCorrectAnswer ? "Bonne réponse !" : "Incorrect."}</strong>{" "}
+            {isCorrectAnswer
+              ? `${selectedAnswer} est la bonne réponse.`
               : attempts === 1
-                ? "Pas tout à fait. Essaie encore !"
-                : `La bonne réponse était : ${question.answer}`}
+                ? `${selectedAnswer} n’est pas la bonne réponse. Essaie encore.`
+                : `${selectedAnswer} n’est pas la bonne réponse. La bonne réponse était : ${question.answer}.`}
           </p>
         )}
       </div>
@@ -276,22 +300,81 @@ export default function QuizGame({
   category,
   state,
   onAnswer,
+  onTimeExpired,
   onNext,
   onSubmitList,
   onLeave,
 }: QuizGameProps) {
   const isComplete = state.status === "complete";
+  const quizAnswers = useMemo(
+    () => state.questions.map(({ answer }) => answer),
+    [state.questions],
+  );
+  const questionIndex =
+    state.status === "playing" ? state.questionIndex : -1;
+  const isPlaying = state.status === "playing";
+  const mode = isPlaying ? state.mode : null;
+  const format = isPlaying ? state.format : null;
+  const onTimeExpiredRef = useRef(onTimeExpired);
+  const [remainingSeconds, setRemainingSeconds] = useState(15);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const isAnswerResolved =
     state.status === "playing" &&
     state.format !== "list" &&
     state.selectedAnswer !== null &&
     (state.attempts >= 2 ||
-      normalizeQuizAnswer(state.selectedAnswer) ===
-        normalizeQuizAnswer(state.questions[state.questionIndex].answer));
+      isQuizAnswerCorrect(
+        state.questions[state.questionIndex],
+        state.selectedAnswer,
+      ));
+
+  useEffect(() => {
+    onTimeExpiredRef.current = onTimeExpired;
+  }, [onTimeExpired]);
+
+  useEffect(() => {
+    if (!isPlaying || mode !== "race" || format === "list" || isAnswerResolved) {
+      return;
+    }
+
+    const deadline = Date.now() + 15_000;
+    const expirationTimeout = window.setTimeout(
+      () => onTimeExpiredRef.current(),
+      15_000,
+    );
+    const interval = window.setInterval(() => {
+      const remainingMilliseconds = Math.max(0, deadline - Date.now());
+      setRemainingSeconds(Math.ceil(remainingMilliseconds / 1_000));
+    }, 250);
+
+    return () => {
+      window.clearTimeout(expirationTimeout);
+      window.clearInterval(interval);
+    };
+  }, [
+    isAnswerResolved,
+    isPlaying,
+    mode,
+    format,
+    questionIndex,
+  ]);
+
+  useEffect(() => {
+    if (!isPlaying || mode !== "timed") return;
+
+    const startedAt = Date.now();
+    const interval = window.setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1_000));
+    }, 1_000);
+    return () => window.clearInterval(interval);
+  }, [isPlaying, mode]);
 
   useEffect(() => {
     if (!isAnswerResolved) return;
-    const timeout = window.setTimeout(onNext, 100);
+    const timeout = window.setTimeout(() => {
+      setRemainingSeconds(15);
+      onNext();
+    }, 100);
     return () => window.clearTimeout(timeout);
   }, [isAnswerResolved, onNext, state]);
 
@@ -316,6 +399,17 @@ export default function QuizGame({
         <h1 id="quiz-game-title">
           {isComplete ? "Quiz terminé !" : "À toi de jouer"}
         </h1>
+        {state.status === "playing" && state.mode === "race" && (
+          <p className={styles.quizClock} role="timer" aria-label="Temps restant">
+            {remainingSeconds} s par question
+          </p>
+        )}
+        {state.status === "playing" && state.mode === "timed" && (
+          <p className={styles.quizClock} role="timer" aria-label="Temps écoulé">
+            Chronomètre : {Math.floor(elapsedSeconds / 60)}:
+            {String(elapsedSeconds % 60).padStart(2, "0")}
+          </p>
+        )}
         {isComplete ? (
           <>
             {state.format === "list" && (
@@ -326,6 +420,7 @@ export default function QuizGame({
               />
             )}
             <QuizResult
+              lost={state.lost}
               error={state.error}
               onLeave={onLeave}
               score={state.score}
@@ -343,6 +438,8 @@ export default function QuizGame({
         ) : (
           <QuizQuestionView
             category={category}
+            areaCode={state.areaCode}
+            quizAnswers={quizAnswers}
             format={state.format}
             onAnswer={onAnswer}
             question={state.questions[state.questionIndex]}

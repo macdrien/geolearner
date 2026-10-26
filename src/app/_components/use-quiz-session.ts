@@ -3,19 +3,22 @@
 import { useReducer } from "react";
 import {
   buildQuiz,
-  normalizeQuizAnswer,
+  isQuizAnswerCorrect,
   type GeographyData,
   type QuizFormatId,
   type QuizQuestion,
   type QuizRequest,
 } from "@/lib/quiz-engine";
 import { recordCompletedQuiz } from "@/lib/quiz-history";
+import type { QuizModeId } from "./quiz-options";
 
 export type QuizSessionState =
   | { status: "idle"; error: string | null }
   | {
       status: "playing";
       format: QuizFormatId;
+      mode: QuizModeId;
+      areaCode?: string;
       questions: QuizQuestion[];
       questionIndex: number;
       selectedAnswer: string | null;
@@ -25,14 +28,22 @@ export type QuizSessionState =
   | {
       status: "complete";
       format: QuizFormatId;
+      mode: QuizModeId;
       questions: QuizQuestion[];
       score: number;
       error: string | null;
       submittedAnswers: string[] | null;
+      lost: boolean;
     };
 
 type QuizSessionAction =
-  | { type: "started"; format: QuizFormatId; questions: QuizQuestion[] }
+  | {
+      type: "started";
+      format: QuizFormatId;
+      mode: QuizModeId;
+      areaCode?: string;
+      questions: QuizQuestion[];
+    }
   | { type: "start-failed"; error: string }
   | { type: "answered"; answer: string }
   | {
@@ -43,6 +54,7 @@ type QuizSessionAction =
     }
   | { type: "next" }
   | { type: "finished"; error: string | null }
+  | { type: "timed-out"; error: string | null }
   | { type: "left" };
 
 const initialState: QuizSessionState = { status: "idle", error: null };
@@ -56,6 +68,8 @@ function quizSessionReducer(
       return {
         status: "playing",
         format: action.format,
+        mode: action.mode,
+        areaCode: action.areaCode,
         questions: action.questions,
         questionIndex: 0,
         selectedAnswer: null,
@@ -69,15 +83,19 @@ function quizSessionReducer(
         state.status !== "playing" ||
         state.format === "list" ||
         state.attempts >= 2 ||
-        state.selectedAnswer ===
-          state.questions[state.questionIndex].answer
+        (state.selectedAnswer !== null &&
+          isQuizAnswerCorrect(
+            state.questions[state.questionIndex],
+            state.selectedAnswer,
+          ))
       ) {
         return state;
       }
       {
-        const isCorrect =
-          normalizeQuizAnswer(action.answer) ===
-          normalizeQuizAnswer(state.questions[state.questionIndex].answer);
+        const isCorrect = isQuizAnswerCorrect(
+          state.questions[state.questionIndex],
+          action.answer,
+        );
         return {
           ...state,
           selectedAnswer: action.answer,
@@ -90,18 +108,22 @@ function quizSessionReducer(
       return {
         status: "complete",
         format: state.format,
+        mode: state.mode,
         questions: state.questions,
         score: action.score,
         error: action.error,
         submittedAnswers: action.answers,
+        lost: false,
       };
     case "next":
       if (
         state.status !== "playing" ||
         state.selectedAnswer === null ||
         (state.attempts < 2 &&
-          normalizeQuizAnswer(state.selectedAnswer) !==
-            normalizeQuizAnswer(state.questions[state.questionIndex].answer))
+          !isQuizAnswerCorrect(
+            state.questions[state.questionIndex],
+            state.selectedAnswer,
+          ))
       ) {
         return state;
       }
@@ -116,10 +138,24 @@ function quizSessionReducer(
       return {
         status: "complete",
         format: state.format,
+        mode: state.mode,
         questions: state.questions,
         score: state.score,
         error: action.error,
         submittedAnswers: null,
+        lost: false,
+      };
+    case "timed-out":
+      if (state.status !== "playing" || state.mode !== "race") return state;
+      return {
+        status: "complete",
+        format: state.format,
+        mode: state.mode,
+        questions: state.questions,
+        score: state.score,
+        error: action.error,
+        submittedAnswers: null,
+        lost: true,
       };
     case "left":
       return initialState;
@@ -133,11 +169,13 @@ function errorMessage(error: unknown, fallback: string) {
 export default function useQuizSession(geography: GeographyData) {
   const [state, dispatch] = useReducer(quizSessionReducer, initialState);
 
-  function startQuiz(request: QuizRequest) {
+  function startQuiz(request: QuizRequest, mode: QuizModeId) {
     try {
       dispatch({
         type: "started",
         format: request.format ?? "classic",
+        mode,
+        areaCode: request.areaCode,
         questions: buildQuiz(geography, request),
       });
     } catch (error) {
@@ -159,8 +197,10 @@ export default function useQuizSession(geography: GeographyData) {
       state.format === "list" ||
       state.selectedAnswer === null ||
       (state.attempts < 2 &&
-        normalizeQuizAnswer(state.selectedAnswer) !==
-          normalizeQuizAnswer(state.questions[state.questionIndex].answer))
+        !isQuizAnswerCorrect(
+          state.questions[state.questionIndex],
+          state.selectedAnswer,
+        ))
     ) {
       return;
     }
@@ -196,9 +236,8 @@ export default function useQuizSession(geography: GeographyData) {
       throw new Error("Une réponse doit être fournie pour chaque question.");
     }
 
-    const score = state.questions.filter(
-      ({ answer }, index) =>
-        normalizeQuizAnswer(answers[index]) === normalizeQuizAnswer(answer),
+    const score = state.questions.filter((question, index) =>
+      isQuizAnswerCorrect(question, answers[index]),
     ).length;
     let error: string | null = null;
 
@@ -217,6 +256,24 @@ export default function useQuizSession(geography: GeographyData) {
     dispatch({ type: "list-submitted", answers, score, error });
   }
 
+  function timeExpired(questionnaire: string, mode: string) {
+    if (state.status !== "playing" || state.mode !== "race") return;
+
+    let error: string | null = null;
+    try {
+      recordCompletedQuiz({
+        questionnaire,
+        mode,
+        score: `${state.score}/${state.questions.length}`,
+      });
+    } catch (recordError) {
+      console.error("Impossible d’enregistrer le résultat du quiz :", recordError);
+      error =
+        "Le quiz est perdu, mais son résultat n’a pas pu être enregistré sur cet appareil.";
+    }
+    dispatch({ type: "timed-out", error });
+  }
+
   function leaveQuiz() {
     dispatch({ type: "left" });
   }
@@ -227,6 +284,7 @@ export default function useQuizSession(geography: GeographyData) {
     answerQuestion,
     advanceQuestion,
     submitListAnswers,
+    timeExpired,
     leaveQuiz,
   };
 }

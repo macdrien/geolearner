@@ -6,6 +6,7 @@ import {
   getAvailableQuizFormats,
   getQuizQuestionCount,
   getSelectedQuizSize,
+  isQuizAnswerCorrect,
   normalizeQuizAnswer,
 } from "../../src/lib/quiz-engine";
 
@@ -94,14 +95,32 @@ describe("geography quiz engine", () => {
       () => 0.5,
     );
 
-    expect(counties).toHaveLength(47);
-    expect(counties.find(({ prompt }) => prompt.startsWith("London"))?.answer)
-      .toBe("City of London et Greater London");
-    expect(seats).toHaveLength(48);
+    expect(counties).toHaveLength(48);
     expect(
-      seats.find(({ prompt }) => prompt.includes("county de Greater London"))
+      counties.find(({ prompt }) => prompt.includes("county de Bedfordshire"))
         ?.answer,
-    ).toBe("London");
+    ).toBe("Bedford");
+    expect(seats).toHaveLength(47);
+    expect(
+      seats.find(({ prompt }) => prompt.startsWith("London"))?.answer,
+    ).toBe("City of London et Greater London");
+
+    const mapSeats = buildQuiz(
+      geography,
+      { category: "england-seats", format: "map" },
+      () => 0.5,
+    );
+    const londonMapQuestion = mapSeats.find(({ prompt }) =>
+      prompt.startsWith("London"),
+    );
+    if (!londonMapQuestion) throw new Error("La question de Londres est absente.");
+    expect(mapSeats).toHaveLength(47);
+    expect(londonMapQuestion.answer).toBe("City of London");
+    expect(londonMapQuestion.acceptedAnswers).toEqual([
+      "City of London",
+      "Greater London",
+    ]);
+    expect(isQuizAnswerCorrect(londonMapQuestion, "Greater London")).toBe(true);
   });
 
   it("builds one question for each French region", () => {
@@ -127,7 +146,7 @@ describe("geography quiz engine", () => {
     ).toBe("Place la région Occitanie sur la carte.");
   });
 
-  it("uses a direct country name for world map quiz prompts", () => {
+  it("uses a direct place name for ranked map quiz prompts", () => {
     const mapQuiz = buildQuiz(
       geography,
       { category: "world-population", format: "map", size: 10 },
@@ -135,29 +154,40 @@ describe("geography quiz engine", () => {
     );
 
     expect(mapQuiz[0].prompt).toBe(
-      `Trouve ${mapQuiz[0].answer} sur la carte du monde.`,
+      `Trouve ${mapQuiz[0].answer} sur la carte.`,
     );
   });
 
-  it("offers list answers for every quiz and maps only for geographic areas", () => {
+  it("offers classic, typed, and map answers for every quiz", () => {
     expect(getAvailableQuizFormats("departments")).toEqual([
       "classic",
       "list",
       "map",
     ]);
-    expect(getAvailableQuizFormats("world-area")).toContain("map");
-    expect(getAvailableQuizFormats("prefectures")).toContain("map");
-    expect(getAvailableQuizFormats("england-counties")).toEqual([
-      "classic",
-      "list",
-    ]);
-    expect(() =>
-      buildQuiz(
-        geography,
-        { category: "england-counties", format: "map" },
-        () => 0.5,
-      ),
-    ).toThrow("Ce format de quiz n’est pas disponible pour ce thème.");
+    const mapQuizRequests = [
+      ["departments", undefined],
+      ["prefectures", undefined],
+      ["regions", undefined],
+      ["french-cities", undefined],
+      ["england-counties", undefined],
+      ["england-seats", undefined],
+      ["england-cities", undefined],
+      ["world-population", undefined],
+      ["world-area", undefined],
+      ["region-cities", "11"],
+      ["occitanie-cities", "31"],
+    ] as const;
+
+    for (const [category, areaCode] of mapQuizRequests) {
+      expect(getAvailableQuizFormats(category)).toContain("map");
+      expect(
+        buildQuiz(
+          geography,
+          { category, areaCode, format: "map" },
+          () => 0.5,
+        ).length,
+      ).toBeGreaterThan(0);
+    }
   });
 
   it("normalizes accents, case, and extra spaces in typed answers", () => {
@@ -215,8 +245,8 @@ describe("geography quiz engine", () => {
   });
 
   it("shares accurate question counts and selected-size fallbacks", () => {
-    expect(getQuizQuestionCount(geography, "england-counties")).toBe(47);
-    expect(getQuizQuestionCount(geography, "england-seats")).toBe(48);
+    expect(getQuizQuestionCount(geography, "england-counties")).toBe(48);
+    expect(getQuizQuestionCount(geography, "england-seats")).toBe(47);
     expect(getQuizQuestionCount(geography, "regions")).toBe(18);
     expect(
       getSelectedQuizSize(geography, "region-cities", 100, "01"),

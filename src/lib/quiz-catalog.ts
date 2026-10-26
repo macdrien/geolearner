@@ -60,12 +60,12 @@ export const quizCategories = [
   {
     id: "england-counties",
     title: "Les counties anglais",
-    detail: "Retrouve le county à partir de son chef-lieu",
+    detail: "Associe chaque county à son chef-lieu traditionnel",
   },
   {
     id: "england-seats",
     title: "Les chefs-lieux des counties anglais",
-    detail: "Associe chaque county à son chef-lieu traditionnel",
+    detail: "Retrouve le county à partir de son chef-lieu",
   },
   {
     id: "england-cities",
